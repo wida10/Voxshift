@@ -14,6 +14,7 @@ export default function Layout({ children }) {
   const navLinks = [
     { to: '/dashboard', label: 'Dashboard' },
     { to: '/process',   label: 'Nuevo audio' },
+    { to: '/voices',    label: 'Mis voces' },
     { to: '/settings',  label: 'Configuración' },
   ];
 

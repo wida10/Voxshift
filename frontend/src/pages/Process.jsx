@@ -1,10 +1,11 @@
 import { useState, useRef, useEffect } from 'react';
-import { useNavigate }   from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import Layout            from '../components/Layout.jsx';
 import AudioRecorder     from '../components/AudioRecorder.jsx';
 import AudioPlayer       from '../components/AudioPlayer.jsx';
 import UpgradeModal      from '../components/UpgradeModal.jsx';
 import { useJobPolling } from '../hooks/useJobs.js';
+import { useVoices }     from '../hooks/useVoices.js';
 import { LANGUAGES }     from '../lib/utils.js';
 import api               from '../lib/api.js';
 
@@ -46,6 +47,13 @@ export default function Process() {
 
   const [pageMode, setPageMode] = useState('translate');
 
+  const { voices } = useVoices();
+
+  // Voice selection: 'source' = clone from audio, or a saved voice id
+  const [selectedVoice, setSelectedVoice] = useState('source');
+  // TTS voice: 'record' = record in the moment, or a saved voice id
+  const [ttsVoice, setTtsVoice]           = useState('record');
+
   const [jobId, setJobId]             = useState(null);
   const [submitting, setSubmitting]   = useState(false);
   const [error, setError]             = useState('');
@@ -86,6 +94,7 @@ export default function Process() {
     form.append('audio', file);
     form.append('source_language', sourceLanguage);
     form.append('target_language', targetLanguage);
+    if (selectedVoice !== 'source') form.append('voice_id', selectedVoice);
     try {
       const { data } = await api.post('/api/jobs', form, { headers: { 'Content-Type': 'multipart/form-data' } });
       setJobId(data.jobId);
@@ -97,15 +106,16 @@ export default function Process() {
 
   const handleTtsSubmit = async (e) => {
     e.preventDefault();
-    if (!ttsFile) return setError('Graba o sube una muestra de tu voz primero.');
+    if (ttsVoice === 'record' && !ttsFile) return setError('Graba o sube una muestra de tu voz primero.');
     if (!ttsText.trim()) return setError('Escribe el texto que deseas sintetizar.');
     setSubmitting(true); setError('');
     const form = new FormData();
-    form.append('audio', ttsFile);
+    if (ttsVoice === 'record') form.append('audio', ttsFile);
     form.append('mode', 'tts');
     form.append('text', ttsText);
     form.append('source_language', 'es');
     form.append('target_language', 'es');
+    if (ttsVoice !== 'record') form.append('voice_id', ttsVoice);
     try {
       const { data } = await api.post('/api/jobs', form, { headers: { 'Content-Type': 'multipart/form-data' } });
       setJobId(data.jobId);
@@ -265,12 +275,17 @@ export default function Process() {
             </div>
           </div>
 
-          <div className="flex items-start gap-3 p-4 rounded-xl border border-violet/30 bg-violet/5">
-            <span className="text-lg mt-0.5">🎙️</span>
-            <div>
-              <p className="text-sm font-semibold text-white">Tu voz será clonada automáticamente</p>
-              <p className="text-xs text-gray-400 mt-0.5">VoxShift analiza tu audio y genera la traducción con tu misma voz en el idioma destino.</p>
-            </div>
+          <div>
+            <label className="label">Voz del resultado</label>
+            <select value={selectedVoice} onChange={(e) => setSelectedVoice(e.target.value)} className="input w-full">
+              <option value="source">🎙️ Clonar voz del audio original</option>
+              {voices.map((v) => <option key={v.id} value={v.id}>🔊 {v.name}</option>)}
+            </select>
+            {voices.length === 0 && (
+              <p className="text-xs text-gray-500 mt-1.5">
+                <Link to="/voices" className="text-violet hover:underline">Guarda una voz</Link> para usarla como salida en lugar de clonar automáticamente.
+              </p>
+            )}
           </div>
 
           <div>
@@ -348,53 +363,54 @@ export default function Process() {
           </div>
 
           <div>
-            <label className="label">Muestra de tu voz</label>
-            <p className="text-xs text-gray-500 mb-3">Habla naturalmente durante 5–30 segundos para clonar tu voz.</p>
-
-            <div className="flex gap-2 mb-4">
-              {['record', 'upload'].map((mode) => (
-                <button key={mode} type="button"
-                  onClick={() => { setTtsInputMode(mode); setTtsFile(null); setError(''); }}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                    ttsInputMode === mode ? 'bg-violet text-white' : 'bg-surface text-gray-400 hover:text-white'
-                  }`}
-                >
-                  {mode === 'record' ? '🎙️ Grabar' : '📂 Subir archivo'}
-                </button>
-              ))}
-            </div>
-
-            {ttsInputMode === 'upload' && (
-              <div
-                onClick={() => ttsFileInputRef.current?.click()}
-                className={`card border-dashed border-2 cursor-pointer hover:border-violet/50 transition-colors text-center py-8 ${
-                  ttsFile ? 'border-violet/50 bg-violet/5' : 'border-border'
-                }`}
-              >
-                {ttsFile ? (
-                  <div>
-                    <p className="text-violet font-medium">✓ {ttsFile.name}</p>
-                    <p className="text-xs text-gray-500 mt-1">{(ttsFile.size / 1024 / 1024).toFixed(1)} MB</p>
-                  </div>
-                ) : (
-                  <>
-                    <p className="text-xl mb-2">🎤</p>
-                    <p className="text-gray-400 text-sm">Haz clic para seleccionar tu muestra de voz</p>
-                    <p className="text-xs text-gray-600 mt-1">MP3, WAV, M4A — máximo 50 MB</p>
-                  </>
-                )}
-                <input ref={ttsFileInputRef} type="file" accept="audio/*" className="hidden"
-                  onChange={(e) => { const f = e.target.files[0]; if (f?.size > 50*1024*1024) { setError('Máximo 50 MB.'); return; } setTtsFile(f||null); setError(''); }} />
-              </div>
+            <label className="label">Voz a usar</label>
+            <select value={ttsVoice} onChange={(e) => { setTtsVoice(e.target.value); setTtsFile(null); setError(''); }} className="input w-full mb-3">
+              <option value="record">🎙️ Grabar en el momento</option>
+              {voices.map((v) => <option key={v.id} value={v.id}>🔊 {v.name}</option>)}
+            </select>
+            {voices.length === 0 && (
+              <p className="text-xs text-gray-500 mb-3">
+                <Link to="/voices" className="text-violet hover:underline">Guarda una voz</Link> para no tener que grabar cada vez.
+              </p>
             )}
 
-            {ttsInputMode === 'record' && (
-              <AudioRecorder onRecordingComplete={(f) => { setTtsFile(f); setError(''); }} />
+            {ttsVoice === 'record' && (
+              <>
+                <p className="text-xs text-gray-500 mb-3">Habla naturalmente durante 5–30 segundos para clonar tu voz.</p>
+                <div className="flex gap-2 mb-4">
+                  {['record', 'upload'].map((mode) => (
+                    <button key={mode} type="button"
+                      onClick={() => { setTtsInputMode(mode); setTtsFile(null); setError(''); }}
+                      className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                        ttsInputMode === mode ? 'bg-violet text-white' : 'bg-surface text-gray-400 hover:text-white'
+                      }`}
+                    >
+                      {mode === 'record' ? '🎙️ Grabar' : '📂 Subir archivo'}
+                    </button>
+                  ))}
+                </div>
+                {ttsInputMode === 'upload' && (
+                  <div onClick={() => ttsFileInputRef.current?.click()}
+                    className={`card border-dashed border-2 cursor-pointer hover:border-violet/50 transition-colors text-center py-8 ${ttsFile ? 'border-violet/50 bg-violet/5' : 'border-border'}`}
+                  >
+                    {ttsFile ? (
+                      <div><p className="text-violet font-medium">✓ {ttsFile.name}</p><p className="text-xs text-gray-500 mt-1">{(ttsFile.size/1024/1024).toFixed(1)} MB</p></div>
+                    ) : (
+                      <><p className="text-xl mb-2">🎤</p><p className="text-gray-400 text-sm">Haz clic para seleccionar tu muestra de voz</p></>
+                    )}
+                    <input ref={ttsFileInputRef} type="file" accept="audio/*" className="hidden"
+                      onChange={(e) => { const f = e.target.files[0]; if (f?.size > 50*1024*1024) { setError('Máximo 50 MB.'); return; } setTtsFile(f||null); setError(''); }} />
+                  </div>
+                )}
+                {ttsInputMode === 'record' && (
+                  <AudioRecorder onRecordingComplete={(f) => { setTtsFile(f); setError(''); }} />
+                )}
+              </>
             )}
           </div>
 
           {error && <p className="text-red-400 text-sm">{error}</p>}
-          <button type="submit" disabled={!ttsFile || !ttsText.trim() || submitting} className="btn-primary py-3 text-base">
+          <button type="submit" disabled={(ttsVoice === 'record' && !ttsFile) || !ttsText.trim() || submitting} className="btn-primary py-3 text-base">
             {submitting ? 'Enviando…' : 'Generar audio con mi voz'}
           </button>
         </form>

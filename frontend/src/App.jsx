@@ -4,6 +4,7 @@ import Landing      from './pages/Landing.jsx';
 import Dashboard    from './pages/Dashboard.jsx';
 import Process      from './pages/Process.jsx';
 import Settings     from './pages/Settings.jsx';
+import Voices       from './pages/Voices.jsx';
 import AuthCallback from './pages/AuthCallback.jsx';
 
 function ProtectedRoute({ children }) {
@@ -28,6 +29,7 @@ export default function App() {
         <Route path="/dashboard"     element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
         <Route path="/process"       element={<ProtectedRoute><Process /></ProtectedRoute>} />
         <Route path="/settings"      element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+        <Route path="/voices"        element={<ProtectedRoute><Voices /></ProtectedRoute>} />
         <Route path="*"              element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

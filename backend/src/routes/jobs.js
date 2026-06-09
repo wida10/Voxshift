@@ -21,9 +21,11 @@ const db = () => supabase.schema('voxshift');
 
 // POST /api/jobs — create job (translate or TTS)
 router.post('/', requireAuth, checkMinutes, upload.single('audio'), async (req, res) => {
-  const { source_language, target_language, mode, text } = req.body;
+  const { source_language, target_language, mode, text, voice_id } = req.body;
 
-  if (!req.file) return res.status(400).json({ error: 'Audio file required' });
+  // Audio required unless TTS with saved voice
+  const needsAudio = !(mode === 'tts' && voice_id);
+  if (needsAudio && !req.file) return res.status(400).json({ error: 'Audio file required' });
 
   if (mode === 'tts') {
     if (!text?.trim()) return res.status(400).json({ error: 'text required for TTS mode' });
@@ -34,6 +36,14 @@ router.post('/', requireAuth, checkMinutes, upload.single('audio'), async (req, 
       return res.status(400).json({ error: 'Source and target languages must differ' });
   }
 
+  // Resolve saved voice sample path if provided
+  let voiceSamplePath = null;
+  if (voice_id) {
+    const { data: voice } = await db().from('voices').select('sample_path').eq('id', voice_id).eq('user_id', req.userId).single();
+    if (!voice) return res.status(404).json({ error: 'Voice not found' });
+    voiceSamplePath = voice.sample_path;
+  }
+
   const { data: job, error } = await db()
     .from('audio_jobs')
     .insert({
@@ -41,7 +51,7 @@ router.post('/', requireAuth, checkMinutes, upload.single('audio'), async (req, 
       status:            'pending',
       source_language:   source_language || null,
       target_language:   target_language || null,
-      original_filename: req.file.originalname,
+      original_filename: req.file?.originalname || 'voice-sample',
     })
     .select()
     .single();
@@ -52,14 +62,15 @@ router.post('/', requireAuth, checkMinutes, upload.single('audio'), async (req, 
   }
 
   processJob({
-    jobId:          job.id,
-    userId:         req.userId,
-    audioBuffer:    req.file.buffer,
-    filename:       req.file.originalname,
-    sourceLanguage: source_language,
-    targetLanguage: target_language,
-    mode:           mode || 'translate',
-    ttsText:        text,
+    jobId:           job.id,
+    userId:          req.userId,
+    audioBuffer:     req.file?.buffer || null,
+    filename:        req.file?.originalname || 'voice-sample.webm',
+    sourceLanguage:  source_language,
+    targetLanguage:  target_language,
+    mode:            mode || 'translate',
+    ttsText:         text,
+    voiceSamplePath,
   });
 
   res.status(201).json({ jobId: job.id });

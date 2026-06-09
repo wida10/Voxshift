@@ -8,6 +8,7 @@ import jobsRouter          from './routes/jobs.js';
 import usersRouter         from './routes/users.js';
 import ttsRouter           from './routes/tts.js';
 import lemonsqueezyRouter  from './routes/lemonsqueezy.js';
+import voicesRouter        from './routes/voices.js';
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -30,6 +31,7 @@ app.use('/api/jobs',          jobsRouter);
 app.use('/api/users',         usersRouter);
 app.use('/api/tts',           ttsRouter);
 app.use('/api/lemonsqueezy',  lemonsqueezyRouter);
+app.use('/api/voices',        voicesRouter);
 
 // ── Global error handler ─────────────────────────────────────
 app.use((err, _req, res, _next) => {

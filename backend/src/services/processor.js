@@ -2,7 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import { transcribe }       from './whisper.js';
 import { translate }        from './deepl.js';
 import { synthesizeSpeech } from './fishAudio.js';
-import { uploadOriginal, uploadProcessed, downloadOriginal } from './storage.js';
+import { uploadOriginal, uploadProcessed, downloadOriginal, downloadVoiceSample } from './storage.js';
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -28,9 +28,9 @@ function getMime(ext) {
   return map[ext] || 'audio/mpeg';
 }
 
-// ── Translation job (existing flow) ──────────────────────────
-export async function processJob({ jobId, userId, audioBuffer, filename, sourceLanguage, targetLanguage, mode, ttsText }) {
-  if (mode === 'tts') return processTtsJob({ jobId, userId, audioBuffer, filename, ttsText });
+// ── Translation job ───────────────────────────────────────────
+export async function processJob({ jobId, userId, audioBuffer, filename, sourceLanguage, targetLanguage, mode, ttsText, voiceSamplePath }) {
+  if (mode === 'tts') return processTtsJob({ jobId, userId, audioBuffer, filename, ttsText, voiceSamplePath });
 
   const ext = filename.split('.').pop().toLowerCase();
 
@@ -45,13 +45,20 @@ export async function processJob({ jobId, userId, audioBuffer, filename, sourceL
     console.log(`[processor] ${jobId} — translating…`);
     const transcriptTranslated = await translate(transcriptOriginal, targetLanguage);
 
-    console.log(`[processor] ${jobId} — cloning voice & synthesizing…`);
-    const mp3Buffer = await synthesizeSpeech({
-      text:           transcriptTranslated,
-      referenceAudio: audioBuffer,
-      referenceText:  transcriptOriginal,
-      ext,
-    });
+    // Use saved voice sample or clone from source audio
+    let refAudio = audioBuffer;
+    let refText  = transcriptOriginal;
+    let refExt   = ext;
+
+    if (voiceSamplePath) {
+      console.log(`[processor] ${jobId} — downloading saved voice…`);
+      refAudio = await downloadVoiceSample(voiceSamplePath);
+      refText  = '';
+      refExt   = voiceSamplePath.split('.').pop().toLowerCase();
+    }
+
+    console.log(`[processor] ${jobId} — synthesizing…`);
+    const mp3Buffer = await synthesizeSpeech({ text: transcriptTranslated, referenceAudio: refAudio, referenceText: refText, ext: refExt });
 
     console.log(`[processor] ${jobId} — uploading result…`);
     const outputUrl = await uploadProcessed(userId, jobId, mp3Buffer);
@@ -77,22 +84,29 @@ export async function processJob({ jobId, userId, audioBuffer, filename, sourceL
   }
 }
 
-// ── TTS job (text + voice sample → synthesized audio) ────────
-async function processTtsJob({ jobId, userId, audioBuffer, filename, ttsText }) {
-  const ext = filename.split('.').pop().toLowerCase();
-
+// ── TTS job ───────────────────────────────────────────────────
+async function processTtsJob({ jobId, userId, audioBuffer, filename, ttsText, voiceSamplePath }) {
   try {
-    console.log(`[processor-tts] ${jobId} — uploading voice sample…`);
-    await uploadOriginal(userId, jobId, audioBuffer, getMime(ext), ext);
-    await updateJob(jobId, { status: 'processing' });
+    let refAudio;
+    let refExt;
 
-    console.log(`[processor-tts] ${jobId} — synthesizing with cloned voice…`);
-    const mp3Buffer = await synthesizeSpeech({
-      text:           ttsText,
-      referenceAudio: audioBuffer,
-      referenceText:  '',
-      ext,
-    });
+    if (voiceSamplePath) {
+      // Use saved voice — no source audio to upload
+      console.log(`[processor-tts] ${jobId} — downloading saved voice…`);
+      refAudio = await downloadVoiceSample(voiceSamplePath);
+      refExt   = voiceSamplePath.split('.').pop().toLowerCase();
+      await updateJob(jobId, { status: 'processing' });
+    } else {
+      // Use uploaded voice sample
+      refExt   = (filename || 'audio.webm').split('.').pop().toLowerCase();
+      refAudio = audioBuffer;
+      console.log(`[processor-tts] ${jobId} — uploading voice sample…`);
+      await uploadOriginal(userId, jobId, audioBuffer, getMime(refExt), refExt);
+      await updateJob(jobId, { status: 'processing' });
+    }
+
+    console.log(`[processor-tts] ${jobId} — synthesizing…`);
+    const mp3Buffer = await synthesizeSpeech({ text: ttsText, referenceAudio: refAudio, referenceText: '', ext: refExt });
 
     console.log(`[processor-tts] ${jobId} — uploading result…`);
     const outputUrl = await uploadProcessed(userId, jobId, mp3Buffer);
@@ -113,7 +127,7 @@ async function processTtsJob({ jobId, userId, audioBuffer, filename, ttsText }) 
   }
 }
 
-// ── Regenerate job (re-synthesize with edited text) ───────────
+// ── Regenerate job ────────────────────────────────────────────
 export async function regenerateJob({ job, userId, newText }) {
   const ext = job.original_filename?.split('.').pop()?.toLowerCase() || 'mp3';
 
@@ -122,12 +136,7 @@ export async function regenerateJob({ job, userId, newText }) {
     const audioBuffer = await downloadOriginal(userId, job.id, ext);
 
     console.log(`[processor-regen] ${job.id} — synthesizing with edited text…`);
-    const mp3Buffer = await synthesizeSpeech({
-      text:           newText,
-      referenceAudio: audioBuffer,
-      referenceText:  job.transcript_original || '',
-      ext,
-    });
+    const mp3Buffer = await synthesizeSpeech({ text: newText, referenceAudio: audioBuffer, referenceText: job.transcript_original || '', ext });
 
     console.log(`[processor-regen] ${job.id} — uploading result…`);
     const outputUrl = await uploadProcessed(userId, job.id, mp3Buffer);

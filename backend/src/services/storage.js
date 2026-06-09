@@ -15,6 +15,26 @@ export async function uploadOriginal(userId, jobId, buffer, mimetype, ext) {
   return path;
 }
 
+export async function uploadVoiceSample(path, buffer, mimetype) {
+  const { error } = await supabase.storage.from('voice-samples').upload(path, buffer, { contentType: mimetype, upsert: true });
+  if (error) throw new Error(`Voice sample upload failed: ${error.message}`);
+}
+
+export async function downloadVoiceSample(path) {
+  const { data, error } = await supabase.storage.from('voice-samples').download(path);
+  if (error) throw new Error(`Voice sample download failed: ${error.message}`);
+  return Buffer.from(await data.arrayBuffer());
+}
+
+export async function deleteVoiceSample(path) {
+  await supabase.storage.from('voice-samples').remove([path]);
+}
+
+export function getVoiceSamplePublicUrl(path) {
+  const { data } = supabase.storage.from('voice-samples').getPublicUrl(path);
+  return data.publicUrl;
+}
+
 export async function downloadOriginal(userId, jobId, ext) {
   const path = `${userId}/${jobId}/original.${ext}`;
   const { data, error } = await supabase.storage.from('audio-originals').download(path);
