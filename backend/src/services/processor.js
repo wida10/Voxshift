@@ -1,8 +1,8 @@
 import { createClient } from '@supabase/supabase-js';
-import { transcribe }          from './whisper.js';
-import { translate }           from './deepl.js';
-import { synthesizeSpeech }    from './fishAudio.js';
-import { uploadOriginal, uploadProcessed } from './storage.js';
+import { transcribe }       from './whisper.js';
+import { translate }        from './deepl.js';
+import { synthesizeSpeech } from './fishAudio.js';
+import { uploadOriginal, uploadProcessed, downloadOriginal } from './storage.js';
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -17,48 +17,35 @@ async function updateJob(jobId, fields) {
 
 async function addMinutes(userId, durationSeconds) {
   const minutesToAdd = Math.ceil(durationSeconds / 60);
-  const { data } = await db()
-    .from('users')
-    .select('minutes_used')
-    .eq('id', userId)
-    .single();
-
+  const { data } = await db().from('users').select('minutes_used').eq('id', userId).single();
   if (data) {
-    await db()
-      .from('users')
-      .update({ minutes_used: data.minutes_used + minutesToAdd })
-      .eq('id', userId);
+    await db().from('users').update({ minutes_used: data.minutes_used + minutesToAdd }).eq('id', userId);
   }
 }
 
-export async function processJob({
-  jobId,
-  userId,
-  audioBuffer,
-  filename,
-  sourceLanguage,
-  targetLanguage,
-}) {
+function getMime(ext) {
+  const map = { mp3: 'audio/mpeg', wav: 'audio/wav', m4a: 'audio/m4a', webm: 'audio/webm', ogg: 'audio/ogg' };
+  return map[ext] || 'audio/mpeg';
+}
+
+// ── Translation job (existing flow) ──────────────────────────
+export async function processJob({ jobId, userId, audioBuffer, filename, sourceLanguage, targetLanguage, mode, ttsText }) {
+  if (mode === 'tts') return processTtsJob({ jobId, userId, audioBuffer, filename, ttsText });
+
   const ext = filename.split('.').pop().toLowerCase();
 
   try {
-    // a. Upload original audio
-    console.log(`[processor] ${jobId} — step a: uploading original…`);
+    console.log(`[processor] ${jobId} — uploading original…`);
     await uploadOriginal(userId, jobId, audioBuffer, getMime(ext), ext);
-
-    // b. Mark as processing
     await updateJob(jobId, { status: 'processing' });
 
-    // c. Transcribe with Whisper
-    console.log(`[processor] ${jobId} — step c: transcribing…`);
+    console.log(`[processor] ${jobId} — transcribing…`);
     const transcriptOriginal = await transcribe(audioBuffer, filename, sourceLanguage);
 
-    // d. Translate with DeepL
-    console.log(`[processor] ${jobId} — step d: translating…`);
+    console.log(`[processor] ${jobId} — translating…`);
     const transcriptTranslated = await translate(transcriptOriginal, targetLanguage);
 
-    // e. Clone voice + synthesize in target language with Fish Audio
-    console.log(`[processor] ${jobId} — step e: cloning voice & generating speech…`);
+    console.log(`[processor] ${jobId} — cloning voice & synthesizing…`);
     const mp3Buffer = await synthesizeSpeech({
       text:           transcriptTranslated,
       referenceAudio: audioBuffer,
@@ -66,14 +53,10 @@ export async function processJob({
       ext,
     });
 
-    // f. Upload translated audio
-    console.log(`[processor] ${jobId} — step f: uploading result…`);
+    console.log(`[processor] ${jobId} — uploading result…`);
     const outputUrl = await uploadProcessed(userId, jobId, mp3Buffer);
-
-    // g. Rough duration estimate (~128kbps mp3)
     const durationSeconds = Math.round((audioBuffer.length * 8) / 128000);
 
-    // h. Mark completed
     await updateJob(jobId, {
       status:                    'completed',
       output_url:                outputUrl,
@@ -85,21 +68,78 @@ export async function processJob({
     });
 
     await addMinutes(userId, durationSeconds);
-
   } catch (err) {
     console.error(`[processor] Job ${jobId} failed:`, err.message);
     const errData = err?.response?.data;
     const decoded = Buffer.isBuffer(errData) ? JSON.parse(errData.toString('utf8')) : errData;
-    console.error(`[processor] Full error:`, JSON.stringify(decoded || err?.cause || err?.message, null, 2));
-    await updateJob(jobId, {
-      status:        'failed',
-      error_message: err.message,
-      completed_at:  new Date().toISOString(),
-    });
+    console.error(`[processor] Full error:`, JSON.stringify(decoded || err?.message, null, 2));
+    await updateJob(jobId, { status: 'failed', error_message: err.message, completed_at: new Date().toISOString() });
   }
 }
 
-function getMime(ext) {
-  const map = { mp3: 'audio/mpeg', wav: 'audio/wav', m4a: 'audio/m4a', webm: 'audio/webm', ogg: 'audio/ogg' };
-  return map[ext] || 'audio/mpeg';
+// ── TTS job (text + voice sample → synthesized audio) ────────
+async function processTtsJob({ jobId, userId, audioBuffer, filename, ttsText }) {
+  const ext = filename.split('.').pop().toLowerCase();
+
+  try {
+    console.log(`[processor-tts] ${jobId} — uploading voice sample…`);
+    await uploadOriginal(userId, jobId, audioBuffer, getMime(ext), ext);
+    await updateJob(jobId, { status: 'processing' });
+
+    console.log(`[processor-tts] ${jobId} — synthesizing with cloned voice…`);
+    const mp3Buffer = await synthesizeSpeech({
+      text:           ttsText,
+      referenceAudio: audioBuffer,
+      referenceText:  '',
+      ext,
+    });
+
+    console.log(`[processor-tts] ${jobId} — uploading result…`);
+    const outputUrl = await uploadProcessed(userId, jobId, mp3Buffer);
+    const durationSeconds = Math.round((mp3Buffer.length * 8) / 128000);
+
+    await updateJob(jobId, {
+      status:                    'completed',
+      output_url:                outputUrl,
+      transcript_translated:     ttsText,
+      original_duration_seconds: durationSeconds,
+      completed_at:              new Date().toISOString(),
+    });
+
+    await addMinutes(userId, durationSeconds);
+  } catch (err) {
+    console.error(`[processor-tts] Job ${jobId} failed:`, err.message);
+    await updateJob(jobId, { status: 'failed', error_message: err.message, completed_at: new Date().toISOString() });
+  }
+}
+
+// ── Regenerate job (re-synthesize with edited text) ───────────
+export async function regenerateJob({ job, userId, newText }) {
+  const ext = job.original_filename?.split('.').pop()?.toLowerCase() || 'mp3';
+
+  try {
+    console.log(`[processor-regen] ${job.id} — downloading original…`);
+    const audioBuffer = await downloadOriginal(userId, job.id, ext);
+
+    console.log(`[processor-regen] ${job.id} — synthesizing with edited text…`);
+    const mp3Buffer = await synthesizeSpeech({
+      text:           newText,
+      referenceAudio: audioBuffer,
+      referenceText:  job.transcript_original || '',
+      ext,
+    });
+
+    console.log(`[processor-regen] ${job.id} — uploading result…`);
+    const outputUrl = await uploadProcessed(userId, job.id, mp3Buffer);
+
+    await updateJob(job.id, {
+      status:               'completed',
+      output_url:           outputUrl,
+      transcript_translated: newText,
+      completed_at:         new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error(`[processor-regen] Job ${job.id} failed:`, err.message);
+    await updateJob(job.id, { status: 'failed', error_message: err.message, completed_at: new Date().toISOString() });
+  }
 }

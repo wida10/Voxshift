@@ -15,6 +15,13 @@ export async function uploadOriginal(userId, jobId, buffer, mimetype, ext) {
   return path;
 }
 
+export async function downloadOriginal(userId, jobId, ext) {
+  const path = `${userId}/${jobId}/original.${ext}`;
+  const { data, error } = await supabase.storage.from('audio-originals').download(path);
+  if (error) throw new Error(`Download failed: ${error.message}`);
+  return Buffer.from(await data.arrayBuffer());
+}
+
 export async function deleteJobFiles(userId, jobId) {
   await supabase.storage.from('audio-originals').remove([
     `${userId}/${jobId}/original.mp3`,
