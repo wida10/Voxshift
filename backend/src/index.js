@@ -12,6 +12,9 @@ import lemonsqueezyRouter  from './routes/lemonsqueezy.js';
 const app  = express();
 const PORT = process.env.PORT || 3000;
 
+// ── Health check (before all middleware) ─────────────────────
+app.get('/health', (_req, res) => res.json({ ok: true }));
+
 // ── CORS ──────────────────────────────────────────────────────
 app.use(cors({
   origin: process.env.FRONTEND_URL || 'http://localhost:5173',
@@ -19,7 +22,6 @@ app.use(cors({
 }));
 
 // ── Body parsers ─────────────────────────────────────────────
-// Webhook routes need the raw body — mount BEFORE json()
 app.use('/api/lemonsqueezy/webhook', express.raw({ type: '*/*' }));
 app.use(express.json());
 
@@ -29,7 +31,11 @@ app.use('/api/users',         usersRouter);
 app.use('/api/tts',           ttsRouter);
 app.use('/api/lemonsqueezy',  lemonsqueezyRouter);
 
-app.get('/health', (_req, res) => res.json({ ok: true }));
+// ── Global error handler ─────────────────────────────────────
+app.use((err, _req, res, _next) => {
+  console.error('[express error]', err.message, err.stack);
+  res.status(500).json({ error: err.message });
+});
 
 // ── Monthly minute reset (runs at 00:00 on day 1 of each month)
 const supabase = createClient(
