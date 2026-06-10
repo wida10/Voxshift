@@ -64,7 +64,7 @@ router.post('/', requireAuth, upload.single('audio'), async (req, res) => {
     res.status(201).json(withUrl(voice));
   } catch (err) {
     console.error('[voices] Create error:', err.message);
-    res.status(500).json({ error: 'Could not create voice' });
+    res.status(500).json({ error: 'Could not create voice', detail: err.message });
   }
 });
 

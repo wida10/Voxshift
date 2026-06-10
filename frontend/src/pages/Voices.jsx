@@ -75,7 +75,7 @@ function CreateVoiceForm({ onCreated, onCancel }) {
       if (err.response?.data?.error === 'voice_limit') {
         setError(err.response.data.message);
       } else {
-        setError('No se pudo guardar la voz. Inténtalo de nuevo.');
+        setError(`Error: ${err.response?.data?.detail || err.response?.data?.error || 'No se pudo guardar la voz. Inténtalo de nuevo.'}`);
       }
     } finally {
       setSaving(false);
