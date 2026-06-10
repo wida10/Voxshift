@@ -22,7 +22,16 @@ function withUrl(voice) {
 
 // GET /api/voices/debug  — temporary diagnostic, no auth
 router.get('/debug', async (_req, res) => {
-  const results = {};
+  const url = process.env.SUPABASE_URL || '';
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+  const results = {
+    url_len: url.length,
+    url_trimmed_len: url.trim().length,
+    url_preview: url.trim().slice(0, 30),
+    key_len: key.length,
+    key_trimmed_len: key.trim().length,
+  };
+
   try {
     const { data, error } = await supabase.schema('voxshift').from('voices').select('id').limit(1);
     results.db = error ? `ERROR: ${error.message}` : 'OK';
