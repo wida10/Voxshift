@@ -20,6 +20,24 @@ function withUrl(voice) {
   return { ...voice, preview_url: getVoiceSamplePublicUrl(voice.sample_path) };
 }
 
+// GET /api/voices/debug  — temporary diagnostic, no auth
+router.get('/debug', async (_req, res) => {
+  const results = {};
+  try {
+    const { data, error } = await supabase.schema('voxshift').from('voices').select('id').limit(1);
+    results.db = error ? `ERROR: ${error.message}` : 'OK';
+  } catch (e) { results.db = `THROW: ${e.message}`; }
+
+  try {
+    const tiny = Buffer.from('test');
+    const { error } = await supabase.storage.from('voice-samples').upload('_debug_test.txt', tiny, { upsert: true });
+    if (!error) await supabase.storage.from('voice-samples').remove(['_debug_test.txt']);
+    results.storage = error ? `ERROR: ${error.message}` : 'OK';
+  } catch (e) { results.storage = `THROW: ${e.message}`; }
+
+  res.json(results);
+});
+
 // GET /api/voices
 router.get('/', requireAuth, async (req, res) => {
   const { data, error } = await db()
