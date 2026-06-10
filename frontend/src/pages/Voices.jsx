@@ -69,13 +69,13 @@ function CreateVoiceForm({ onCreated, onCancel }) {
     form.append('name', name.trim());
 
     try {
-      const { data } = await api.post('/api/voices', form, { headers: { 'Content-Type': 'multipart/form-data' } });
+      const { data } = await api.post('/api/voices', form);
       onCreated(data);
     } catch (err) {
       if (err.response?.data?.error === 'voice_limit') {
         setError(err.response.data.message);
       } else {
-        setError(`Error: ${err.response?.data?.detail || err.response?.data?.error || 'No se pudo guardar la voz. Inténtalo de nuevo.'}`);
+        setError('No se pudo guardar la voz. Inténtalo de nuevo.');
       }
     } finally {
       setSaving(false);
